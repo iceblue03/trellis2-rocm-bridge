@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+
+# Blender
+*.blend1
+*.blend2
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Claude Code session state — not part of the project
+.claude/
+
+# Runtime state from the WSL-side server — never belongs in this repo
+server_data/
+*.log
+
+# Reference sample output — kept locally, not tracked so clones stay small.
+# Regenerate it any time via the addon (512^3, ~11 min).
+sample_512.glb

@@ -1,0 +1,17 @@
+{
+  "pipeline_type": "512",
+  "low_vram": false,
+  "total_so_far": 106.14,
+  "stages": [
+    {
+      "stage": "imports",
+      "seconds": 4.75,
+      "peak_gib": 0.0
+    },
+    {
+      "stage": "from_pretrained (disk->cpu)",
+      "seconds": 101.39,
+      "peak_gib": 0.0
+    }
+  ]
+}

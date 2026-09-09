@@ -1,0 +1,141 @@
+# AGENTS.md
+
+Guidance for AI coding agents (Claude Code, Cursor, Codex, etc.) working in this
+repo. Read this before editing anything — the repo is split across two machines
+and the split is not optional.
+
+## What this repo is
+
+A Blender addon (`trellis_bridge_addon.py`) that drives a local TRELLIS.2
+image-to-3D generation server over HTTP. The server runs inside WSL2 on an AMD
+Ryzen AI 9 iGPU (gfx1150) via ROCm. See [README.md](README.md) for the full
+picture, architecture diagram, and why this hardware combination needed custom
+work in the first place.
+
+## The one invariant you must not break
+
+**This Windows folder and the WSL install are two different filesystems that
+happen to share six filenames.** The addon (`trellis_bridge_addon.py`,
+`sample_512.glb`) only ever lives here. But `trellis_server.py`, `start_server.sh`,
+`run_trellis.sh`, `run_inference.py`, `profile_run.py`, and `profile_lv0.json` are
+**mirrored** — the copy that actually runs is at `/root/TRELLIS.2_rocm/<same name>`
+inside the `Ubuntu-24.04` WSL distro, not the one in this folder.
+
+- If you edit one of those six files here, it does **nothing** until you also copy
+  it into WSL.
+- If you edit one of those six files in WSL to test something, **copy it back
+  here** afterward or this repo silently goes stale.
+- Never assume "I edited the file in the repo" means "the running server changed."
+  Always state which side you edited and whether the other side needs syncing.
+
+Everything else that makes TRELLIS.2 actually work (`trellis2/` pipeline source,
+`app.py`, `assets/`, `configs/`, `data_toolkit/`, `train.py`, the fork's own
+`setup.sh`/`conda-env.yaml`) lives *only* in WSL, in its own git repo
+(`Cardboard-box-a/TRELLIS.2_rocm`, branch `rocm`). Do not copy it into this repo —
+that's a deliberate scope boundary, not an oversight. If a task requires touching
+that code, edit it in place inside WSL and say so; don't vendor it here.
+
+`server_data/` (job logs, uploads, generated GLBs, `jobs.json`) is runtime state,
+not source. Never commit it, never copy it into this repo.
+
+## Environment access
+
+The WSL side is reached via `wsl.exe` from Windows. Two gotchas discovered while
+building this:
+
+1. **Run commands as root**: `wsl.exe -d Ubuntu-24.04 -u root -- bash -lc '...'`.
+   Without `-u root` you'll get permission errors under `/root/TRELLIS.2_rocm`.
+2. **Wrap everything in `bash -lc '...'`, never pass a bare path as an argument.**
+   `wsl.exe -d Ubuntu-24.04 -- bash /root/foo.sh` gets mangled by MSYS/Git-Bash path
+   auto-conversion into a Windows path (`C:/Program Files/Git/root/foo.sh`) before
+   `wsl.exe` ever sees it. Always do
+   `wsl.exe -d Ubuntu-24.04 -u root -- bash -lc 'bash /root/foo.sh'` instead.
+3. **Escape `$` as `\$` inside the `-lc` string** if you need the *inner* (WSL)
+   shell to expand a variable — e.g. `bash -lc 'x=5; echo "\$x"'`. The command
+   passes through an outer shell first, which will otherwise expand `$x` (to
+   empty) before `wsl.exe` even runs. This bit us on both a loop counter and a
+   `DEST` path variable during initial setup — assignments silently evaluated to
+   empty with no error.
+
+## Getting a working environment from scratch
+
+1. In WSL (`Ubuntu-24.04`), clone `https://github.com/Cardboard-box-a/TRELLIS.2_rocm.git`
+   (branch `rocm`) to `/root/TRELLIS.2_rocm`.
+2. Build the `trellis2-gfx1150` conda env and run that repo's `setup.sh` with the
+   ROCm-relevant flags (`--basic --flash-attn --flexgemm --o-voxel --nvdiffrast`;
+   see its `--help`). Install ROCm PyTorch first
+   (`torch==2.6.0`/`torchvision==0.21.0`, `--index-url .../rocm6.2.4`).
+3. `huggingface-cli login`, and make sure the account has been granted access to
+   the gated `facebook/dinov3-vitl16-pretrain-lvd1689m` — the pipeline load fails
+   without it (see `run_trellis.sh`'s pre-flight check for this exact failure mode).
+4. Copy this repo's `trellis_server.py` and `start_server.sh` into
+   `/root/TRELLIS.2_rocm/` (they assume they run from there, with the conda env
+   active).
+5. Install `trellis_bridge_addon.py` in Blender (Edit > Preferences > Add-ons >
+   Install) and confirm its preferences match: `server_url=http://127.0.0.1:7861`,
+   `wsl_distro=Ubuntu-24.04`, `start_script=/root/TRELLIS.2_rocm/start_server.sh`.
+
+## Validating a change
+
+Don't assume — check. The addon's own "서버 시작" button does exactly this:
+
+```bash
+wsl.exe -d Ubuntu-24.04 -u root -- bash -lc 'bash /root/TRELLIS.2_rocm/start_server.sh'
+# then poll:
+wsl.exe -d Ubuntu-24.04 -u root -- bash -lc 'curl -s http://127.0.0.1:7861/health'
+```
+
+Expect `model_status` to move `loading` → `ready` in ~170s (~127s measured on the
+reference machine). `"model_status":"failed"` with a `model_error` field means the
+pipeline load itself broke — check `server_data/server.log` in WSL, not this repo.
+
+A full `/generate` job (POST an image, poll `/jobs/<id>`, GET
+`/jobs/<id>/file`) takes ~11 minutes at 512³ and ~4GB peak — expensive enough that
+you shouldn't run it speculatively. Prefer the health check above to confirm the
+bridge itself works; only run a full generation when the actual pipeline behavior
+is what's being changed.
+
+## Hardware constraints that are not optional
+
+These aren't style preferences — violating them has previously OOM'd and killed
+host processes on this machine:
+
+- `low_vram` must stay `True` in `trellis_server.py`. This is a UMA iGPU: "GPU"
+  memory and system RAM are the same physical RAM, and `low_vram=False` tried to
+  keep the full 16GB of weights resident, exceeding the WSL VM's memory allotment.
+- Jobs are serialized to one at a time — no concurrent GPU work.
+- Do not set `expandable_segments:True` in `PYTORCH_HIP_ALLOC_CONF` — it throws
+  `hipErrorInvalidValue` under WSL's DXG paravirtualization. The current value
+  (`garbage_collection_threshold:0.6,max_split_size_mb:128`) is deliberate.
+- Required env vars (already set as defaults in `trellis_server.py` /
+  `run_inference.py`, don't remove): `HSA_XNACK=1`, `HSA_ENABLE_DXG_DETECTION=1`,
+  `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`, `ATTN_BACKEND=sdpa`.
+
+## Report what you find
+
+This repo's [LICENSE](LICENSE) grants broad permission to use, modify, and
+redistribute the addon/bridge code for any purpose — in exchange, it asks
+(as a good-faith condition, not a legal threat) that anyone who finds a
+problem or improvement reports it. If you're an agent working in this repo,
+that means you too:
+
+- Notice a bug, a stale assumption, a security issue, or something that
+  contradicts this file or the README while you're in here for an unrelated
+  task? Don't silently fix it and move on, and don't silently ignore it
+  either — say so explicitly in your response to whoever is running you, and
+  if the repo has been pushed, open an issue at
+  `https://github.com/iceblue03/trellis2-blender-bridge/issues` (adjust if the
+  repo has moved).
+- Same for improvement ideas you noticed but weren't asked to implement.
+- This applies even if it's outside the scope of what you were asked to do —
+  the point is surfacing it, not necessarily fixing it unprompted.
+
+## Do not
+
+- Do not copy `trellis2/`, `app.py`, `assets/`, `configs/`, `data_toolkit/`, or
+  `server_data/` from WSL into this repo.
+- Do not remove the `low_vram=True` hardcode or the job serialization "to make it
+  faster" — both are load-bearing on this hardware.
+- Do not re-add `expandable_segments:True` to the HIP allocator config.
+- Do not run a full `/generate` job as a routine verification step (see
+  "Validating a change" above) — use `/health` instead.
