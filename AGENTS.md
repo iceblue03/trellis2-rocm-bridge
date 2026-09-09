@@ -1,30 +1,31 @@
 # AGENTS.md
 
 Guidance for AI coding agents (Claude Code, Cursor, Codex, etc.) working in this
-repo. Read this before editing anything — the repo is split across two machines
-and the split is not optional.
+repo. Read this before editing anything — the code that actually runs lives on a
+different machine than this repo, and that split is not optional.
 
 ## What this repo is
 
-A Blender addon (`trellis_bridge_addon.py`) that drives a local TRELLIS.2
-image-to-3D generation server over HTTP. The server runs inside WSL2 on an AMD
-Ryzen AI 9 iGPU (gfx1150) via ROCm. See [README.md](README.md) for the full
-picture, architecture diagram, and why this hardware combination needed custom
-work in the first place.
+The HTTP bridge server for a local TRELLIS.2 image-to-3D generation pipeline: a
+job queue on top of TRELLIS.2, running inside WSL2 on an AMD Ryzen AI 9 iGPU
+(gfx1150) via ROCm. It's client-agnostic — the
+[Blender addon](https://github.com/iceblue03/trellis2-blender-addon) is the
+reference client, but anything that speaks HTTP can drive it. See
+[README.md](README.md) for the full picture, architecture diagram, and why this
+hardware combination needed custom work in the first place.
 
 ## The one invariant you must not break
 
-**This Windows folder and the WSL install are two different filesystems that
-happen to share six filenames.** The addon (`trellis_bridge_addon.py`,
-`sample_512.glb`) only ever lives here. But `trellis_server.py`, `start_server.sh`,
-`run_trellis.sh`, `run_inference.py`, `profile_run.py`, and `profile_lv0.json` are
-**mirrored** — the copy that actually runs is at `/root/TRELLIS.2_rocm/<same name>`
-inside the `Ubuntu-24.04` WSL distro, not the one in this folder.
+**This repo and the WSL install are two different filesystems that happen to
+share six filenames.** `trellis_server.py`, `start_server.sh`, `run_trellis.sh`,
+`run_inference.py`, `profile_run.py`, and `profile_lv0.json` here are **mirrors**
+— the copy that actually runs is at `/root/TRELLIS.2_rocm/<same name>` inside the
+`Ubuntu-24.04` WSL distro, not the one in this repo.
 
-- If you edit one of those six files here, it does **nothing** until you also copy
-  it into WSL.
-- If you edit one of those six files in WSL to test something, **copy it back
-  here** afterward or this repo silently goes stale.
+- If you edit one of those files here, it does **nothing** until you also copy it
+  into WSL.
+- If you edit one of those files in WSL to test something, **copy it back here**
+  afterward or this repo silently goes stale.
 - Never assume "I edited the file in the repo" means "the running server changed."
   Always state which side you edited and whether the other side needs syncing.
 
@@ -40,7 +41,7 @@ not source. Never commit it, never copy it into this repo.
 
 ## Environment access
 
-The WSL side is reached via `wsl.exe` from Windows. Two gotchas discovered while
+The WSL side is reached via `wsl.exe` from Windows. Three gotchas discovered while
 building this:
 
 1. **Run commands as root**: `wsl.exe -d Ubuntu-24.04 -u root -- bash -lc '...'`.
@@ -71,13 +72,13 @@ building this:
 4. Copy this repo's `trellis_server.py` and `start_server.sh` into
    `/root/TRELLIS.2_rocm/` (they assume they run from there, with the conda env
    active).
-5. Install `trellis_bridge_addon.py` in Blender (Edit > Preferences > Add-ons >
-   Install) and confirm its preferences match: `server_url=http://127.0.0.1:7861`,
-   `wsl_distro=Ubuntu-24.04`, `start_script=/root/TRELLIS.2_rocm/start_server.sh`.
+5. Start it and confirm it's healthy (see "Validating a change" below), then point
+   a client at `http://127.0.0.1:7861` — e.g. install the
+   [Blender addon](https://github.com/iceblue03/trellis2-blender-addon).
 
 ## Validating a change
 
-Don't assume — check. The addon's own "서버 시작" button does exactly this:
+Don't assume — check.
 
 ```bash
 wsl.exe -d Ubuntu-24.04 -u root -- bash -lc 'bash /root/TRELLIS.2_rocm/start_server.sh'
@@ -114,17 +115,16 @@ host processes on this machine:
 ## Report what you find
 
 This repo's [LICENSE](LICENSE) grants broad permission to use, modify, and
-redistribute the addon/bridge code for any purpose — in exchange, it asks
-(as a good-faith condition, not a legal threat) that anyone who finds a
-problem or improvement reports it. If you're an agent working in this repo,
-that means you too:
+redistribute this code for any purpose — in exchange, it asks (as a good-faith
+condition, not a legal threat) that anyone who finds a problem or improvement
+reports it. If you're an agent working in this repo, that means you too:
 
 - Notice a bug, a stale assumption, a security issue, or something that
   contradicts this file or the README while you're in here for an unrelated
   task? Don't silently fix it and move on, and don't silently ignore it
   either — say so explicitly in your response to whoever is running you, and
   if the repo has been pushed, open an issue at
-  `https://github.com/iceblue03/trellis2-blender-bridge/issues` (adjust if the
+  `https://github.com/iceblue03/trellis2-rocm-bridge/issues` (adjust if the
   repo has moved).
 - Same for improvement ideas you noticed but weren't asked to implement.
 - This applies even if it's outside the scope of what you were asked to do —
@@ -134,6 +134,8 @@ that means you too:
 
 - Do not copy `trellis2/`, `app.py`, `assets/`, `configs/`, `data_toolkit/`, or
   `server_data/` from WSL into this repo.
+- Do not add a Blender-specific (or any other client-specific) dependency here —
+  this repo is the server; clients live in their own repos.
 - Do not remove the `low_vram=True` hardcode or the job serialization "to make it
   faster" — both are load-bearing on this hardware.
 - Do not re-add `expandable_segments:True` to the HIP allocator config.

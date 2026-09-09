@@ -11,7 +11,7 @@ non-commercial, subject to the following conditions:
 
 1. Attribution. The above copyright notice, this permission notice, and a
    reference to the original repository
-   (https://github.com/iceblue03/trellis2-blender-bridge) shall be included
+   (https://github.com/iceblue03/trellis2-rocm-bridge) shall be included
    in all copies or substantial portions of the Software, and credited in any
    published work that is based on or derived from it.
 
@@ -32,10 +32,9 @@ SOFTWARE.
 
 ---
 
-Scope: this license covers the original code in this repository — the
-Blender addon (`trellis_bridge_addon.py`) and the bridge/orchestration scripts
-(`trellis_server.py`, `start_server.sh`, `run_trellis.sh`, `run_inference.py`,
-`profile_run.py`). It does not cover TRELLIS.2 itself or the ROCm fork it runs
-on top of (`Cardboard-box-a/TRELLIS.2_rocm`, and upstream
-`microsoft/TRELLIS.2`), which live in their own repositories under their own
-licenses.
+Scope: this license covers the original code in this repository — the bridge
+server and orchestration scripts (`trellis_server.py`, `start_server.sh`,
+`run_trellis.sh`, `run_inference.py`, `profile_run.py`). It does not cover
+TRELLIS.2 itself or the ROCm fork it runs on top of
+(`Cardboard-box-a/TRELLIS.2_rocm`, and upstream `microsoft/TRELLIS.2`), which
+live in their own repositories under their own licenses.
