@@ -229,9 +229,16 @@ cancelBtn.addEventListener('click', async () => {
 function poll(format) {
   polling = setInterval(async () => {
     if (!jobId) return;
-    const res = await fetch(`/jobs/${jobId}`);
-    if (!res.ok) return;
-    const job = await res.json();
+    let job;
+    try {
+      const res = await fetch(`/jobs/${jobId}`);
+      if (!res.ok) return;
+      job = await res.json();
+    } catch (err) {
+      // transient network hiccup (e.g. the server briefly restarting) —
+      // just skip this tick and let the next poll retry.
+      return;
+    }
     stageEl.textContent = `${job.stage_label || job.status} (${Math.round((job.progress || 0) * 100)}%)`;
     progressEl.value = job.progress || 0;
     etaEl.textContent = job.eta_seconds != null ? `예상 남은 시간: 약 ${job.eta_seconds}초` : '';
@@ -562,8 +569,13 @@ def _convert_output(job_id: str, glb_path: Path, fmt: str) -> Path:
         else:
             mesh = loaded
             if isinstance(loaded, trimesh.Scene):
-                geoms = list(loaded.geometry.values())
-                mesh = loaded.dump(concatenate=True) if len(geoms) != 1 else geoms[0]
+                # Always flatten via the scene graph, even for a single geometry:
+                # Scene stores per-node transforms separately from the raw
+                # geometry (scene.graph, not scene.geometry), so grabbing the
+                # lone geometry directly would silently drop any placement
+                # transform (position/rotation/scale) that node carries.
+                mesh = (loaded.to_geometry() if hasattr(loaded, 'to_geometry')
+                        else loaded.dump(concatenate=True))
             # explicit file_type: tmp_out's real extension is .tmp, not fmt
             mesh.export(str(tmp_out), file_type=fmt)
         tmp_out.replace(out)
