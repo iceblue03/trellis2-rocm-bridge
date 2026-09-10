@@ -207,12 +207,12 @@ f.addEventListener('submit', async (e) => {
   try {
     res = await fetch('/generate', { method: 'POST', body });
   } catch (err) {
-    stageEl.innerHTML = `<span class="err">요청 실패: ${err}</span>`;
+    setError(stageEl, `요청 실패: ${err}`);
     return;
   }
   if (!res.ok) {
     const detail = (await res.json().catch(() => ({}))).detail || res.statusText;
-    stageEl.innerHTML = `<span class="err">${detail}</span>`;
+    setError(stageEl, detail);
     return;
   }
   const data = await res.json();
@@ -238,12 +238,25 @@ function poll(format) {
 
     if (job.status === 'done') {
       stopPolling();
-      dlEl.innerHTML = `<a href="/jobs/${jobId}/file?format=${format}" download>결과 다운로드 (${format})</a>`;
+      dlEl.textContent = '';
+      const a = document.createElement('a');
+      a.href = `/jobs/${encodeURIComponent(jobId)}/file?format=${encodeURIComponent(format)}`;
+      a.download = '';
+      a.textContent = `결과 다운로드 (${format})`;
+      dlEl.appendChild(a);
     } else if (['failed', 'cancelled', 'interrupted'].includes(job.status)) {
       stopPolling();
-      stageEl.innerHTML = `<span class="err">${job.status}: ${job.error || ''}</span>`;
+      setError(stageEl, `${job.status}: ${job.error || ''}`);
     }
   }, 2000);
+}
+
+function setError(el, text) {
+  el.textContent = '';
+  const span = document.createElement('span');
+  span.className = 'err';
+  span.textContent = text;
+  el.appendChild(span);
 }
 </script>
 </body>
@@ -513,7 +526,10 @@ def _convert_output(job_id: str, glb_path: Path, fmt: str) -> Path:
     """Return `glb_path` re-exported as `fmt`, converting once and caching the
     result next to the .glb. Geometry-only formats (ply/stl) drop the texture
     atlas; obj keeps it via a sidecar .mtl + image, bundled into a zip since a
-    single HTTP response can only carry one file."""
+    single HTTP response can only carry one file. Each call writes to its own
+    uniquely-named temp path/dir and atomically replaces the final output, so
+    concurrent downloads of the same job/format can't see a partial file or
+    clobber each other's temp files."""
     if fmt == 'glb':
         return glb_path
 
@@ -526,20 +542,21 @@ def _convert_output(job_id: str, glb_path: Path, fmt: str) -> Path:
     except ImportError:
         raise HTTPException(
             501, f"'{fmt}' 변환에는 trimesh가 필요합니다. WSL의 trellis2-gfx1150 "
-                 f"conda 환경에서 `pip install trimesh`를 실행한 뒤 서버를 재시작하세요.")
+                 f"conda 환경에 `pip install trimesh`로 설치하면 재시작 없이 "
+                 f"다음 요청부터 바로 사용할 수 있습니다.")
 
+    token = uuid.uuid4().hex[:8]
+    tmp_out = out.with_name(f'{out.name}.{token}.tmp')
     try:
         loaded = trimesh.load(str(glb_path))
         if fmt == 'obj':
-            obj_dir = OUTPUTS / f'{job_id}_obj'
-            obj_dir.mkdir(exist_ok=True)
+            obj_dir = OUTPUTS / f'{job_id}_obj_{token}'
+            obj_dir.mkdir()
             try:
                 loaded.export(str(obj_dir / 'model.obj'))
-                tmp = out.with_suffix('.tmp')
-                with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED) as zf:
+                with zipfile.ZipFile(tmp_out, 'w', zipfile.ZIP_DEFLATED) as zf:
                     for f in obj_dir.iterdir():
                         zf.write(f, arcname=f.name)
-                tmp.replace(out)
             finally:
                 shutil.rmtree(obj_dir, ignore_errors=True)
         else:
@@ -547,11 +564,15 @@ def _convert_output(job_id: str, glb_path: Path, fmt: str) -> Path:
             if isinstance(loaded, trimesh.Scene):
                 geoms = list(loaded.geometry.values())
                 mesh = loaded.dump(concatenate=True) if len(geoms) != 1 else geoms[0]
-            mesh.export(str(out))
+            # explicit file_type: tmp_out's real extension is .tmp, not fmt
+            mesh.export(str(tmp_out), file_type=fmt)
+        tmp_out.replace(out)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(500, f"'{fmt}' 형식으로 변환하지 못했습니다: {e}")
+    finally:
+        tmp_out.unlink(missing_ok=True)
     return out
 
 
