@@ -29,11 +29,12 @@ import threading
 import time
 import traceback
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 ROOT = Path('/root/TRELLIS.2_rocm')
 WORK = ROOT / 'server_data'
@@ -78,6 +79,196 @@ STAGE_LABELS = {
     'to_glb': 'GLB 생성 (UV/텍스처)',
     'export': '파일 쓰기',
 }
+
+# GLB is the pipeline's native, fully-textured output. The other formats are
+# produced on demand at download time (never during generation) by re-reading
+# the already-exported .glb with trimesh, so a missing/broken trimesh install
+# only affects format conversion, never generation itself. Requires
+# `pip install trimesh` in the trellis2-gfx1150 conda env — see AGENTS.md.
+SUPPORTED_FORMATS = ('glb', 'obj', 'ply', 'stl')
+_FORMAT_MEDIA_TYPES = {
+    'glb': 'model/gltf-binary',
+    'obj': 'application/zip',   # bundled with its .mtl + texture image(s)
+    'ply': 'application/octet-stream',
+    'stl': 'model/stl',
+}
+
+# Minimal same-origin web UI so the server has a client that isn't the Blender
+# addon or curl. Talks to the exact same JSON endpoints below — nothing here
+# is UI-only API surface. Kept as one inline string (not a static/ file) so it
+# stays inside trellis_server.py's existing WSL-mirroring rule in AGENTS.md
+# instead of adding a second file that needs to be kept in sync separately.
+_INDEX_HTML = """<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TRELLIS.2 ROCm Bridge</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 14px/1.5 system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.25rem; }
+  label { display: block; margin: 0.6rem 0 0.2rem; font-size: 0.85rem; opacity: 0.8; }
+  input, select, button { font: inherit; padding: 0.4rem; }
+  input[type=number] { width: 8rem; }
+  button { cursor: pointer; }
+  #status { margin-top: 1rem; padding: 0.75rem; border-radius: 8px; background: #8882; display: none; }
+  progress { width: 100%; }
+  .row { display: flex; gap: 1rem; flex-wrap: wrap; }
+  .err { color: #c0392b; }
+</style>
+</head>
+<body>
+<h1>TRELLIS.2 ROCm Bridge</h1>
+<p>이미지를 업로드하면 텍스처가 입혀진 3D 메시를 생성합니다. 이 페이지는
+<a href="/docs">/docs</a>(OpenAPI/Swagger)와 동일한 HTTP API 위에 얹은 참고용
+클라이언트일 뿐이며, curl이나 Blender addon과 동시에 써도 서로 간섭하지 않습니다.</p>
+
+<form id="f">
+  <label for="image">이미지 (PNG 권장, 배경 제거가 필요하면 알파 채널 포함)</label>
+  <input id="image" name="image" type="file" accept="image/*" required>
+
+  <div class="row">
+    <div>
+      <label for="pipeline_type">해상도</label>
+      <select id="pipeline_type" name="pipeline_type">
+        <option value="512" selected>512</option>
+        <option value="1024">1024</option>
+        <option value="1024_cascade">1024 (cascade)</option>
+        <option value="1536_cascade">1536 (cascade)</option>
+      </select>
+    </div>
+    <div>
+      <label for="seed">시드</label>
+      <input id="seed" name="seed" type="number" value="42">
+    </div>
+    <div>
+      <label for="texture_size">텍스처 크기</label>
+      <input id="texture_size" name="texture_size" type="number" value="2048" step="256">
+    </div>
+    <div>
+      <label for="decimation_target">목표 폴리곤 수</label>
+      <input id="decimation_target" name="decimation_target" type="number" value="1000000" step="50000">
+    </div>
+  </div>
+
+  <label for="format">다운로드 형식</label>
+  <select id="format" name="format">
+    <option value="glb" selected>GLB — 텍스처 포함, 기본값</option>
+    <option value="obj">OBJ — 범용, .mtl+텍스처를 zip으로 묶음</option>
+    <option value="ply">PLY — 지오메트리만</option>
+    <option value="stl">STL — 지오메트리만</option>
+  </select>
+
+  <p>
+    <button type="submit">생성 시작</button>
+    <button type="button" id="cancel" disabled>취소</button>
+  </p>
+</form>
+
+<div id="status">
+  <div id="stage"></div>
+  <progress id="progress" value="0" max="1"></progress>
+  <div id="eta"></div>
+  <div id="dl"></div>
+</div>
+
+<script>
+const f = document.getElementById('f');
+const statusBox = document.getElementById('status');
+const stageEl = document.getElementById('stage');
+const progressEl = document.getElementById('progress');
+const etaEl = document.getElementById('eta');
+const dlEl = document.getElementById('dl');
+const cancelBtn = document.getElementById('cancel');
+let jobId = null, polling = null;
+
+function stopPolling() {
+  clearInterval(polling);
+  polling = null;
+  cancelBtn.disabled = true;
+}
+
+f.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  stopPolling();
+  jobId = null;
+  dlEl.innerHTML = '';
+  etaEl.textContent = '';
+  statusBox.style.display = 'block';
+  stageEl.textContent = '업로드 중...';
+  progressEl.value = 0;
+
+  const body = new FormData(f);
+  const format = body.get('format');
+  body.delete('format'); // /generate doesn't take this; only /jobs/{id}/file does
+
+  let res;
+  try {
+    res = await fetch('/generate', { method: 'POST', body });
+  } catch (err) {
+    setError(stageEl, `요청 실패: ${err}`);
+    return;
+  }
+  if (!res.ok) {
+    const detail = (await res.json().catch(() => ({}))).detail || res.statusText;
+    setError(stageEl, detail);
+    return;
+  }
+  const data = await res.json();
+  jobId = data.job_id;
+  cancelBtn.disabled = false;
+  poll(format);
+});
+
+cancelBtn.addEventListener('click', async () => {
+  if (!jobId) return;
+  await fetch(`/jobs/${jobId}/cancel`, { method: 'POST' });
+});
+
+function poll(format) {
+  polling = setInterval(async () => {
+    if (!jobId) return;
+    let job;
+    try {
+      const res = await fetch(`/jobs/${jobId}`);
+      if (!res.ok) return;
+      job = await res.json();
+    } catch (err) {
+      // transient network hiccup (e.g. the server briefly restarting) —
+      // just skip this tick and let the next poll retry.
+      return;
+    }
+    stageEl.textContent = `${job.stage_label || job.status} (${Math.round((job.progress || 0) * 100)}%)`;
+    progressEl.value = job.progress || 0;
+    etaEl.textContent = job.eta_seconds != null ? `예상 남은 시간: 약 ${job.eta_seconds}초` : '';
+
+    if (job.status === 'done') {
+      stopPolling();
+      dlEl.textContent = '';
+      const a = document.createElement('a');
+      a.href = `/jobs/${encodeURIComponent(jobId)}/file?format=${encodeURIComponent(format)}`;
+      a.download = '';
+      a.textContent = `결과 다운로드 (${format})`;
+      dlEl.appendChild(a);
+    } else if (['failed', 'cancelled', 'interrupted'].includes(job.status)) {
+      stopPolling();
+      setError(stageEl, `${job.status}: ${job.error || ''}`);
+    }
+  }, 2000);
+}
+
+function setError(el, text) {
+  el.textContent = '';
+  const span = document.createElement('span');
+  span.className = 'err';
+  span.textContent = text;
+  el.appendChild(span);
+}
+</script>
+</body>
+</html>
+"""
 
 app = FastAPI(title='TRELLIS.2 Blender Bridge')
 
@@ -336,8 +527,75 @@ def _startup():
 
 
 # --------------------------------------------------------------------------- #
+# output format conversion
+# --------------------------------------------------------------------------- #
+def _convert_output(job_id: str, glb_path: Path, fmt: str) -> Path:
+    """Return `glb_path` re-exported as `fmt`, converting once and caching the
+    result next to the .glb. Geometry-only formats (ply/stl) drop the texture
+    atlas; obj keeps it via a sidecar .mtl + image, bundled into a zip since a
+    single HTTP response can only carry one file. Each call writes to its own
+    uniquely-named temp path/dir and atomically replaces the final output, so
+    concurrent downloads of the same job/format can't see a partial file or
+    clobber each other's temp files."""
+    if fmt == 'glb':
+        return glb_path
+
+    out = OUTPUTS / (f'{job_id}.obj.zip' if fmt == 'obj' else f'{job_id}.{fmt}')
+    if out.exists():
+        return out
+
+    try:
+        import trimesh
+    except ImportError:
+        raise HTTPException(
+            501, f"'{fmt}' 변환에는 trimesh가 필요합니다. WSL의 trellis2-gfx1150 "
+                 f"conda 환경에 `pip install trimesh`로 설치하면 재시작 없이 "
+                 f"다음 요청부터 바로 사용할 수 있습니다.")
+
+    token = uuid.uuid4().hex[:8]
+    tmp_out = out.with_name(f'{out.name}.{token}.tmp')
+    try:
+        loaded = trimesh.load(str(glb_path))
+        if fmt == 'obj':
+            obj_dir = OUTPUTS / f'{job_id}_obj_{token}'
+            obj_dir.mkdir()
+            try:
+                loaded.export(str(obj_dir / 'model.obj'))
+                with zipfile.ZipFile(tmp_out, 'w', zipfile.ZIP_DEFLATED) as zf:
+                    for f in obj_dir.iterdir():
+                        zf.write(f, arcname=f'trellis_{job_id}/{f.name}')
+            finally:
+                shutil.rmtree(obj_dir, ignore_errors=True)
+        else:
+            mesh = loaded
+            if isinstance(loaded, trimesh.Scene):
+                # Always flatten via the scene graph, even for a single geometry:
+                # Scene stores per-node transforms separately from the raw
+                # geometry (scene.graph, not scene.geometry), so grabbing the
+                # lone geometry directly would silently drop any placement
+                # transform (position/rotation/scale) that node carries.
+                mesh = (loaded.to_geometry() if hasattr(loaded, 'to_geometry')
+                        else loaded.dump(concatenate=True))
+            # explicit file_type: tmp_out's real extension is .tmp, not fmt
+            mesh.export(str(tmp_out), file_type=fmt)
+        tmp_out.replace(out)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"'{fmt}' 형식으로 변환하지 못했습니다: {e}")
+    finally:
+        tmp_out.unlink(missing_ok=True)
+    return out
+
+
+# --------------------------------------------------------------------------- #
 # API
 # --------------------------------------------------------------------------- #
+@app.get('/', response_class=HTMLResponse)
+def index():
+    return _INDEX_HTML
+
+
 @app.get('/health')
 def health():
     with _jobs_lock:
@@ -350,6 +608,7 @@ def health():
         'min_free_gib': MIN_FREE_GIB,
         'current_job': _current_job_id,
         'queued': queued,
+        'output_formats': list(SUPPORTED_FORMATS),
     }
 
 
@@ -454,13 +713,19 @@ def cancel_job(job_id: str):
 
 
 @app.get('/jobs/{job_id}/file')
-def download(job_id: str):
+def download(job_id: str, format: str = 'glb'):
+    fmt = format.lower()
+    if fmt not in SUPPORTED_FORMATS:
+        raise HTTPException(
+            400, f"지원하지 않는 형식: {format} (지원: {', '.join(SUPPORTED_FORMATS)})")
     with _jobs_lock:
         job = _jobs.get(job_id)
     if job is None or not job.get('output_file'):
         raise HTTPException(404, '결과 파일이 없습니다.')
-    return FileResponse(job['output_file'], media_type='model/gltf-binary',
-                        filename=f'trellis_{job_id}.glb')
+    out = _convert_output(job_id, Path(job['output_file']), fmt)
+    ext = 'obj.zip' if fmt == 'obj' else fmt
+    return FileResponse(out, media_type=_FORMAT_MEDIA_TYPES[fmt],
+                        filename=f'trellis_{job_id}.{ext}')
 
 
 if __name__ == '__main__':

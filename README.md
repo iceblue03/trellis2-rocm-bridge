@@ -1,12 +1,16 @@
+*Read this in other languages: [한국어](README.ko.md).*
+
 # TRELLIS.2 ROCm Bridge
 
 A local HTTP job-queue server that turns a single image into a textured 3D mesh
 using **TRELLIS.2**, running entirely on an **AMD Ryzen AI 9 integrated GPU** via
 ROCm inside WSL2 — no cloud API, no discrete GPU required.
 
-POST an image, poll a job ID, download a GLB. The
-[Blender addon](https://github.com/iceblue03/trellis2-blender-addon) is the
-reference client, but any HTTP client can drive it.
+POST an image, poll a job ID, download the mesh (GLB by default; OBJ/PLY/STL
+also available, see [Output formats](#output-formats-and-other-ways-to-use-it)
+below). The [Blender addon](https://github.com/iceblue03/trellis2-blender-addon)
+is the reference client, but any HTTP client can drive it — including the
+built-in web UI at `/` for a quick one-off generation with no client at all.
 
 ## Why this exists
 
@@ -38,15 +42,52 @@ Any HTTP client                          WSL2 "Ubuntu-24.04"
  your own script, ...)  :7861  ───────► │ /root/TRELLIS.2_rocm          │
                                          │  conda env: trellis2-gfx1150  │
                          ◄────────────  │  trellis_server.py (FastAPI)  │
-                         GLB + JSON      │  → TRELLIS.2 pipeline (HIP)   │
+                       mesh file + JSON  │  → TRELLIS.2 pipeline (HIP)   │
                                          │  GPU: gfx1150 iGPU, UMA RAM   │
                                          └───────────────────────────────┘
 ```
 
-`trellis_server.py` exposes `/health`, `/generate` (multipart image upload),
-`/jobs`, `/jobs/{id}`, `/jobs/{id}/file`, and `/jobs/{id}/cancel`. Jobs are
-persisted to disk so a crash or restart leaves a visible record instead of a
-silently vanished job.
+`trellis_server.py` exposes `/` (a small built-in web UI, see below), `/docs`
+(interactive OpenAPI/Swagger docs, provided automatically by FastAPI), `/health`,
+`/generate` (multipart image upload), `/jobs`, `/jobs/{id}`,
+`/jobs/{id}/file` (mesh download, see [Output formats](#output-formats-and-other-ways-to-use-it)
+below), and `/jobs/{id}/cancel`. Jobs are persisted to disk so a crash or
+restart leaves a visible record instead of a silently vanished job.
+
+## Output formats and other ways to use it
+
+`/generate` always produces the pipeline's native **GLB** internally — that
+part is unchanged. What's new is `/jobs/{id}/file` now takes an optional
+`?format=` query parameter to convert that GLB to another common mesh format
+on download, converted once and cached:
+
+| `format=` | Contents | Notes |
+|---|---|---|
+| `glb` (default) | full textured mesh, single file | unchanged — existing clients (Blender addon, curl scripts) that don't pass `format` keep getting exactly what they got before |
+| `obj` | `.zip` containing `model.obj` + `.mtl` + texture image(s) | most universally-supported interchange format; zipped because OBJ's texture reference is multiple files, and one HTTP response can only carry one file |
+| `ply` | single file, geometry (+ vertex color where applicable) | no UV texture atlas |
+| `stl` | single file, geometry only | no color/texture at all |
+
+```bash
+curl -O -J "http://127.0.0.1:7861/jobs/<job_id>/file?format=obj"
+```
+
+Conversion happens with [`trimesh`](https://trimesh.org/) at download time —
+it's not a generation-time dependency, so a missing `trimesh` install only
+makes non-GLB formats return `501` (see [AGENTS.md](AGENTS.md)); GLB downloads
+and generation itself are unaffected either way.
+
+Besides the Blender addon and raw `curl`, the server itself now serves two
+other ways to drive it, both built on the exact same endpoints above —
+nothing below is special-cased UI-only API surface:
+
+- **A minimal built-in web UI** at `http://127.0.0.1:7861/` — upload an
+  image, pick a resolution/format, watch progress, download the result.
+  Useful for a quick one-off generation without curl or Blender.
+- **Interactive API docs** at `http://127.0.0.1:7861/docs` — FastAPI's
+  auto-generated OpenAPI/Swagger UI, letting any HTTP/OpenAPI-aware tool
+  (Postman, Blender's own HTTP client, a future non-Blender integration)
+  introspect and call the API without reading this README.
 
 ## Requirements
 
@@ -62,13 +103,17 @@ silently vanished job.
   `facebook/dinov3-vitl16-pretrain-lvd1689m` (required — the pipeline load fails
   without DINOv3 access)
 - A client to actually use it — e.g. the
-  [Blender addon](https://github.com/iceblue03/trellis2-blender-addon), or `curl`
+  [Blender addon](https://github.com/iceblue03/trellis2-blender-addon), `curl`,
+  or the server's own built-in web UI (nothing extra to install for that one)
+- (Optional) [`trimesh`](https://trimesh.org/) (`pip install trimesh`) in the
+  `trellis2-gfx1150` conda env, only if you want `/jobs/{id}/file?format=` to
+  offer OBJ/PLY/STL — GLB downloads work without it
 
 ## Repo layout
 
 | File | What it is |
 |---|---|
-| [`trellis_server.py`](trellis_server.py) | FastAPI bridge server: job queue, `/health`, `/generate`, GLB export |
+| [`trellis_server.py`](trellis_server.py) | FastAPI bridge server: job queue, `/health`, `/generate`, mesh export (GLB/OBJ/PLY/STL), and the built-in `/` web UI |
 | [`start_server.sh`](start_server.sh) | Launches the server detached; idempotent (leaves an already-running server alone) |
 | [`run_trellis.sh`](run_trellis.sh) / [`run_inference.py`](run_inference.py) | One-shot pipeline run with no server, for manual testing/debugging |
 | [`profile_run.py`](profile_run.py) / [`profile_lv0.json`](profile_lv0.json) | Per-stage timing instrumentation + a captured run, used to tune `low_vram`/memory settings |
@@ -102,7 +147,11 @@ is runtime state and is likewise never copied here.
    `"model_status":"ready"` within ~170s.
 5. Point a client at `http://127.0.0.1:7861` — e.g. install the
    [Blender addon](https://github.com/iceblue03/trellis2-blender-addon), whose
-   `server_url` preference defaults to exactly that.
+   `server_url` preference defaults to exactly that, or just open
+   `http://127.0.0.1:7861/` in a browser for the built-in UI.
+6. (Optional) `pip install trimesh` in the same conda env if you want
+   `?format=obj|ply|stl` downloads in addition to GLB — no restart-required
+   config, just make it importable before the first non-GLB download.
 
 ## Known limitations / loose ends
 
@@ -111,6 +160,10 @@ is runtime state and is likewise never copied here.
   jobs to one at a time — see the module docstring in that file for why.
 - 1024³ cascade generation is unverified end-to-end on this hardware; 512³ is the
   tested/recommended path.
+- OBJ/PLY/STL conversion and the `/` web UI were written and exercised against
+  synthetic test meshes (see AGENTS.md), not against a real TRELLIS.2 output on
+  the WSL/ROCm machine — re-verify with an actual `/generate` result before
+  relying on them.
 
 ## Verified working (2026-09-09)
 
