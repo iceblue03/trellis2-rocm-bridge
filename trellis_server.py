@@ -563,7 +563,7 @@ def _convert_output(job_id: str, glb_path: Path, fmt: str) -> Path:
                 loaded.export(str(obj_dir / 'model.obj'))
                 with zipfile.ZipFile(tmp_out, 'w', zipfile.ZIP_DEFLATED) as zf:
                     for f in obj_dir.iterdir():
-                        zf.write(f, arcname=f.name)
+                        zf.write(f, arcname=f'trellis_{job_id}/{f.name}')
             finally:
                 shutil.rmtree(obj_dir, ignore_errors=True)
         else:
