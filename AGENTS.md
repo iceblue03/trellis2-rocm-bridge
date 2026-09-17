@@ -52,10 +52,18 @@ Keep it that way — don't split it out just for tidiness.
 
 Everything else that makes TRELLIS.2 actually work (`trellis2/` pipeline source,
 `app.py`, `assets/`, `configs/`, `data_toolkit/`, `train.py`, the fork's own
-`setup.sh`/`conda-env.yaml`) lives *only* in WSL, in its own git repo
-(`Cardboard-box-a/TRELLIS.2_rocm`, branch `rocm`). Do not copy it into this repo —
-that's a deliberate scope boundary, not an oversight. If a task requires touching
-that code, edit it in place inside WSL and say so; don't vendor it here.
+`setup.sh`/`conda-env.yaml`) lives *only* in WSL, in its own git repo. That WSL
+checkout's `origin` is `Cardboard-box-a/TRELLIS.2_rocm` (branch `rocm`), but it
+also has a `myfork` remote at `iceblue03/TRELLIS.2_rocm` — our own persistent
+fork, which is where the actual gfx1150 build fix (`GPU_ARCHS=gfx1150` in
+`setup.sh`) and an ungated rembg fallback are committed; those existed only as
+uncommitted local edits before 2026-09-17. The `rocm` branch tracks
+`myfork/rocm` by default now — push there, and `git fetch origin` only when you
+deliberately want to pull upstream Cardboard-box-a changes to merge in. Do not
+copy any of this into this repo — that's a deliberate scope boundary, not an
+oversight. If a task requires touching that code, edit it in place inside WSL,
+commit it there (to `myfork`, not just the working tree), and say so; don't
+vendor it here.
 
 `server_data/` (job logs, uploads, generated GLBs, `jobs.json`) is runtime state,
 not source. Never commit it, never copy it into this repo.
@@ -81,8 +89,11 @@ building this:
 
 ## Getting a working environment from scratch
 
-1. In WSL (`Ubuntu-24.04`), clone `https://github.com/Cardboard-box-a/TRELLIS.2_rocm.git`
-   (branch `rocm`) to `/root/TRELLIS.2_rocm`.
+1. In WSL (`Ubuntu-24.04`), clone `https://github.com/iceblue03/TRELLIS.2_rocm.git`
+   (branch `rocm` — our fork, with the gfx1150 build fix already committed) to
+   `/root/TRELLIS.2_rocm`. Add `Cardboard-box-a/TRELLIS.2_rocm` as a second
+   remote (conventionally named `origin`, with the fork as `myfork`) if you
+   want to pull future upstream fixes.
 2. Build the `trellis2-gfx1150` conda env and run that repo's `setup.sh` with the
    ROCm-relevant flags (`--basic --flash-attn --flexgemm --o-voxel --nvdiffrast`;
    see its `--help`). Install ROCm PyTorch first

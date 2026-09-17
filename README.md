@@ -12,6 +12,19 @@ below). The [Blender addon](https://github.com/iceblue03/trellis2-blender-addon)
 is the reference client, but any HTTP client can drive it — including the
 built-in web UI at `/` for a quick one-off generation with no client at all.
 
+## Is this the repo you want?
+
+"ROCm" in the name doesn't mean "any AMD GPU," and this isn't the only TRELLIS.2
+ROCm port. Find your hardware before installing anything:
+
+| Your hardware | Use this instead |
+|---|---|
+| **NVIDIA GPU** | [microsoft/TRELLIS.2](https://microsoft.github.io/TRELLIS.2/) directly, with CUDA. None of this repo's WSL/iGPU workarounds apply to you. |
+| **Discrete AMD GPU** (RX 7700/7800/7900, RX 9060/9070, Radeon PRO W7000-series — RDNA3/RDNA4) | [Cardboard-box-a/TRELLIS.2_rocm](https://github.com/Cardboard-box-a/TRELLIS.2_rocm) directly. That's the pipeline repo this bridge is built on, and it's tested on exactly that class of card (RX 9070 XT). You don't need WSL2, the UMA/`low_vram` workarounds, or this bridge at all. |
+| **AMD Ryzen AI 9 iGPU (Radeon 890M/880M, gfx1150, "Strix Point") on Windows** | ✅ This repo is for you. |
+| **Any other Ryzen AI iGPU** — Radeon 780M (gfx1103, Phoenix/Hawk Point) or Radeon 8050S/8060S (gfx1151/1152/1153, "Strix Halo") | Untested by this project. Read [Hardware support status](#hardware-support-status-read-this-before-opening-an-issue) below before assuming it works. |
+| **Native Linux**, any AMD APU (no WSL) | You don't need the Windows/WSL parts of this repo. Build [our fork of the pipeline](https://github.com/iceblue03/TRELLIS.2_rocm) and run `trellis_server.py` directly; skip the `wsl.exe`-launching bits in the Blender addon. |
+
 ## Why this exists
 
 TRELLIS.2-on-ROCm already exists as community work — but every port we could find
@@ -97,8 +110,11 @@ nothing below is special-cased UI-only API surface:
 - An **AMD Ryzen AI 9** or other gfx1150/Strix Point/Strix Halo APU
 - A conda env (`trellis2-gfx1150`) with TRELLIS.2 + its ROCm-specific extensions
   (flash-attn, FlexGEMM, o-voxel, nvdiffrast-hip) built per
-  [`Cardboard-box-a/TRELLIS.2_rocm`](https://github.com/Cardboard-box-a/TRELLIS.2_rocm)'s
-  `setup.sh`
+  [`iceblue03/TRELLIS.2_rocm`](https://github.com/iceblue03/TRELLIS.2_rocm)'s
+  `setup.sh` — our own fork with the gfx1150 build target already applied (see
+  [Repo layout](#repo-layout) for why it's not
+  [`Cardboard-box-a/TRELLIS.2_rocm`](https://github.com/Cardboard-box-a/TRELLIS.2_rocm)
+  directly anymore)
 - A Hugging Face account with access to `microsoft/TRELLIS.2-4B` and the gated
   `facebook/dinov3-vitl16-pretrain-lvd1689m` (required — the pipeline load fails
   without DINOv3 access)
@@ -126,16 +142,27 @@ otherwise this repo silently drifts out of sync with what's deployed. See
 
 The TRELLIS.2 model/pipeline code itself (`trellis2/`, `app.py`, `assets/`,
 `configs/`, `data_toolkit/`, `train.py`, its own `setup.sh`/`conda-env.yaml`) is
-**not** in this repo — it's the vendored ROCm fork, in its own git repo at
-`https://github.com/Cardboard-box-a/TRELLIS.2_rocm.git` (branch `rocm`), itself
-built on [Lamothe/TRELLIS.2_rocm](https://github.com/Lamothe/TRELLIS.2_rocm) and
-upstream [microsoft/TRELLIS.2](https://microsoft.github.io/TRELLIS.2/). This repo
-is only the bridge layer on top of it. `server_data/` (job logs, uploads, outputs)
-is runtime state and is likewise never copied here.
+**not** in this repo — it lives in
+[**iceblue03/TRELLIS.2_rocm**](https://github.com/iceblue03/TRELLIS.2_rocm)
+(branch `rocm`), our own fork of the ROCm port. It used to point straight at
+[Cardboard-box-a/TRELLIS.2_rocm](https://github.com/Cardboard-box-a/TRELLIS.2_rocm)
+(itself built on [Lamothe/TRELLIS.2_rocm](https://github.com/Lamothe/TRELLIS.2_rocm)
+and upstream [microsoft/TRELLIS.2](https://microsoft.github.io/TRELLIS.2/)) —
+we forked it because the actual gfx1150 build fix (`GPU_ARCHS=gfx1150` in
+`setup.sh`, one line) existed only as an uncommitted local edit on the one
+machine running the server, with no copy anywhere else. It's a real GitHub
+fork, not a hard copy, specifically so future fixes from Cardboard-box-a or
+upstream microsoft/TRELLIS.2 can still be pulled in later — this only fixes
+where the one load-bearing patch lives, it doesn't try to go it alone on the
+model/pipeline code. This repo (`trellis2-rocm-bridge`) is only the bridge
+layer on top of it. `server_data/` (job logs, uploads, outputs) is runtime
+state and is likewise never copied here.
 
 ## Setup
 
-1. In WSL (`Ubuntu-24.04`), clone `Cardboard-box-a/TRELLIS.2_rocm` to
+1. In WSL (`Ubuntu-24.04`), clone
+   [`iceblue03/TRELLIS.2_rocm`](https://github.com/iceblue03/TRELLIS.2_rocm)
+   (our fork — already has the `GPU_ARCHS=gfx1150` build fix committed) to
    `/root/TRELLIS.2_rocm` and build the `trellis2-gfx1150` conda env per its
    `setup.sh` (see [AGENTS.md](AGENTS.md) for the exact flags and a from-scratch
    walkthrough).
@@ -165,6 +192,38 @@ is runtime state and is likewise never copied here.
   the WSL/ROCm machine — re-verify with an actual `/generate` result before
   relying on them.
 
+## Hardware support status (read this before opening an issue)
+
+None of this is officially supported by AMD, on any OS. As of ROCm 7.2.1, the
+[official WSL2 support matrix](https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/compatibility/compatibilityrad/wsl/wsl_compatibility.html)
+lists only discrete cards (RX 7700 XT–9070 XT, W7000-series) — no Ryzen AI
+iGPU, gfx1150 included, appears anywhere in it. gfx1150 support itself is an
+[open feature request against AMD's own platform matrix](https://github.com/ROCm/TheRock/issues/8186),
+not a shipped, documented target. Everything in this repo rests on building
+for an architecture AMD's tooling doesn't officially acknowledge yet, not on
+following a supported path.
+
+That said, `GPU_ARCHS=gfx1150` in
+[our fork's `setup.sh`](https://github.com/iceblue03/TRELLIS.2_rocm/blob/rocm/setup.sh)
+does compile and run, on this specific chip, under WSL2. Whether the same
+trick extends to other Ryzen AI iGPUs is **unverified — we have not tested
+any of the following**:
+
+- **Radeon 8050S/8060S** (gfx1151/1152/1153, "Strix Halo," e.g. Ryzen AI Max
+  385/390/395) — same RDNA3.5 family as gfx1150, one architecture generation
+  up. Swapping `GPU_ARCHS=gfx1150` for the matching code in the fork above is
+  the natural thing to try first, and is the closest match to what's already
+  working here — but nobody has reported it for this bridge specifically.
+- **Radeon 780M** (gfx1103, Phoenix/Hawk Point) — an older RDNA3 iGPU without
+  the matrix-core hardware gfx1150/1151 have. A straight `GPU_ARCHS` swap is
+  less likely to just work; the community fallback reported elsewhere is
+  `HSA_OVERRIDE_GFX_VERSION` rather than a native rebuild, which is a
+  different (and shakier) kind of workaround than what this repo does.
+
+If you try either of these and get a result — working or not — please open
+an issue. That's the specific kind of report this repo's license asks for,
+and it's the only way this table gets more accurate over time.
+
 ## Verified working (2026-09-09)
 
 Ran `start_server.sh` in WSL exactly as a client's "start server" action would
@@ -181,7 +240,11 @@ output produced).
   model and pipeline.
 - [Lamothe/TRELLIS.2_rocm](https://github.com/Lamothe/TRELLIS.2_rocm) and
   [Cardboard-box-a/TRELLIS.2_rocm](https://github.com/Cardboard-box-a/TRELLIS.2_rocm)
-  — the ROCm port this bridge runs on top of.
+  — the ROCm port this bridge is built on. We maintain our own fork,
+  [iceblue03/TRELLIS.2_rocm](https://github.com/iceblue03/TRELLIS.2_rocm), with
+  the gfx1150 build target and an ungated background-removal fallback
+  committed on top. PyTorch, ROCm itself, and the TRELLIS.2 model weights are
+  still pulled from their real upstreams at install time, not vendored.
 - Split out of `trellis2-blender-bridge`, which originally bundled this server
   with a Blender-specific client, so the server can stand on its own and be
   driven by any HTTP client. The Blender addon now lives at

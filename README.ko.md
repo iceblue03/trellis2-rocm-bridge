@@ -13,6 +13,20 @@ OBJ/PLY/STL도 지원합니다. 아래 [출력 형식](#출력-형식과-그-외
 있습니다 — 별도 클라이언트 없이 바로 쓸 수 있는, 빠른 1회성 생성을 위한 내장 웹
 UI(`/`)도 포함해서요.
 
+## 이 저장소가 맞는지 확인하기
+
+이름에 "ROCm"이 들어있다고 해서 "아무 AMD GPU"를 뜻하지는 않으며, TRELLIS.2용
+ROCm 포팅이 이것 하나만 있는 것도 아닙니다. 설치하기 전에 자신의 하드웨어를
+먼저 확인하세요:
+
+| 내 하드웨어 | 대신 이걸 쓰세요 |
+|---|---|
+| **NVIDIA GPU** | CUDA로 [microsoft/TRELLIS.2](https://microsoft.github.io/TRELLIS.2/)를 바로 사용하세요. 이 저장소의 WSL/iGPU 우회책은 전혀 필요 없습니다. |
+| **디스크리트 AMD GPU** (RX 7700/7800/7900, RX 9060/9070, Radeon PRO W7000 시리즈 — RDNA3/RDNA4) | [Cardboard-box-a/TRELLIS.2_rocm](https://github.com/Cardboard-box-a/TRELLIS.2_rocm)을 바로 쓰세요. 이 브리지가 기반으로 삼는 파이프라인 저장소이고, 바로 그런 종류의 카드(RX 9070 XT)에서 테스트되었습니다. WSL2도, UMA/`low_vram` 우회책도, 이 브리지 자체도 필요 없습니다. |
+| **Windows에서 AMD Ryzen AI 9 iGPU (Radeon 890M/880M, gfx1150, "Strix Point")** | ✅ 바로 이 저장소가 맞습니다. |
+| **그 외 Ryzen AI iGPU** — Radeon 780M(gfx1103, Phoenix/Hawk Point) 또는 Radeon 8050S/8060S(gfx1151/1152/1153, "Strix Halo") | 이 프로젝트에서 검증되지 않았습니다. 동작한다고 가정하기 전에 아래 [하드웨어 지원 현황](#하드웨어-지원-현황-이슈를-올리기-전에-읽어주세요)을 먼저 읽으세요. |
+| **네이티브 Linux**(WSL 아님), 아무 AMD APU | 이 저장소의 Windows/WSL 관련 부분은 필요 없습니다. [저희가 포크한 파이프라인 저장소](https://github.com/iceblue03/TRELLIS.2_rocm)를 빌드하고 `trellis_server.py`를 직접 실행하세요 — Blender addon의 `wsl.exe` 실행 관련 부분은 건너뛰면 됩니다. |
+
 ## 왜 이 프로젝트가 존재하는가
 
 ROCm 위에서 동작하는 TRELLIS.2 포팅은 이미 커뮤니티에 존재합니다 — 하지만 우리가
@@ -95,8 +109,11 @@ Blender addon과 순수 `curl` 외에도, 이제 서버 자체가 두 가지 사
   7.2.1 이상 설치(`/dev/dxg` GPU 브리지를 제공하는 버전)
 - **AMD Ryzen AI 9** 또는 다른 gfx1150/Strix Point/Strix Halo APU
 - TRELLIS.2와 그 ROCm 전용 확장(flash-attn, FlexGEMM, o-voxel, nvdiffrast-hip)이
-  [`Cardboard-box-a/TRELLIS.2_rocm`](https://github.com/Cardboard-box-a/TRELLIS.2_rocm)의
-  `setup.sh`대로 빌드된 conda 환경(`trellis2-gfx1150`)
+  [`iceblue03/TRELLIS.2_rocm`](https://github.com/iceblue03/TRELLIS.2_rocm)
+  (gfx1150 빌드 타깃이 이미 적용된 저희 자체 포크)의 `setup.sh`대로 빌드된
+  conda 환경(`trellis2-gfx1150`) — 왜 더 이상
+  [`Cardboard-box-a/TRELLIS.2_rocm`](https://github.com/Cardboard-box-a/TRELLIS.2_rocm)을
+  직접 쓰지 않는지는 [저장소 구성](#저장소-구성) 참고
 - `microsoft/TRELLIS.2-4B`와 gated 모델 `facebook/dinov3-vitl16-pretrain-lvd1689m`에
   접근 권한이 있는 Hugging Face 계정 (필수 — DINOv3 접근 권한이 없으면 파이프라인
   로딩 자체가 실패합니다)
@@ -123,18 +140,28 @@ Blender addon과 순수 `curl` 외에도, 이제 서버 자체가 두 가지 사
 
 TRELLIS.2 모델/파이프라인 코드 자체(`trellis2/`, `app.py`, `assets/`, `configs/`,
 `data_toolkit/`, `train.py`, 그 자체의 `setup.sh`/`conda-env.yaml`)는 이 저장소에
-**없습니다** — 별도 git 저장소인 벤더링된 ROCm 포크
-`https://github.com/Cardboard-box-a/TRELLIS.2_rocm.git`(`rocm` 브랜치)에 있으며,
-이는 [Lamothe/TRELLIS.2_rocm](https://github.com/Lamothe/TRELLIS.2_rocm)과 상위
-[microsoft/TRELLIS.2](https://microsoft.github.io/TRELLIS.2/) 위에 만들어졌습니다.
-이 저장소는 그 위에 얹힌 브리지 레이어일 뿐입니다. `server_data/`(작업 로그, 업로드,
-출력물)는 런타임 상태이며 마찬가지로 이 저장소에 절대 복사되지 않습니다.
+**없습니다** — [**iceblue03/TRELLIS.2_rocm**](https://github.com/iceblue03/TRELLIS.2_rocm)
+(`rocm` 브랜치), 즉 저희가 직접 포크한 ROCm 포트에 있습니다. 원래는
+[Cardboard-box-a/TRELLIS.2_rocm](https://github.com/Cardboard-box-a/TRELLIS.2_rocm)
+(이는 [Lamothe/TRELLIS.2_rocm](https://github.com/Lamothe/TRELLIS.2_rocm)과 상위
+[microsoft/TRELLIS.2](https://microsoft.github.io/TRELLIS.2/) 위에 만들어짐)를
+바로 가리켰지만, 실제 gfx1150 빌드 수정(`setup.sh`의 `GPU_ARCHS=gfx1150` 한 줄)이
+서버를 실행하던 그 머신 하나에만 커밋되지 않은 채로 존재했고 다른 곳엔 사본이
+전혀 없었기 때문에 포크했습니다. 완전히 분리된 사본이 아니라 정식 GitHub 포크로
+유지하는 이유는, Cardboard-box-a나 상위 microsoft/TRELLIS.2 쪽에서 나오는 향후
+수정 사항을 계속 가져올 수 있게 하기 위해서입니다 — 이건 유일하게 중요한 그 패치가
+어디 있는지를 고친 것이지, 모델/파이프라인 코드를 독자적으로 유지하겠다는 게
+아닙니다. 이 저장소(`trellis2-rocm-bridge`)는 그 위에 얹힌 브리지 레이어일
+뿐입니다. `server_data/`(작업 로그, 업로드, 출력물)는 런타임 상태이며 마찬가지로
+이 저장소에 절대 복사되지 않습니다.
 
 ## 설치
 
-1. WSL(`Ubuntu-24.04`)에서 `Cardboard-box-a/TRELLIS.2_rocm`을 `/root/TRELLIS.2_rocm`에
-   클론하고, 그 저장소의 `setup.sh`를 따라 `trellis2-gfx1150` conda 환경을
-   빌드합니다(정확한 플래그와 처음부터 진행하는 절차는 [AGENTS.md](AGENTS.md) 참고).
+1. WSL(`Ubuntu-24.04`)에서 [`iceblue03/TRELLIS.2_rocm`](https://github.com/iceblue03/TRELLIS.2_rocm)
+   (저희 포크 — `GPU_ARCHS=gfx1150` 빌드 수정이 이미 커밋되어 있음)을
+   `/root/TRELLIS.2_rocm`에 클론하고, 그 저장소의 `setup.sh`를 따라
+   `trellis2-gfx1150` conda 환경을 빌드합니다(정확한 플래그와 처음부터 진행하는
+   절차는 [AGENTS.md](AGENTS.md) 참고).
 2. 이 저장소의 `trellis_server.py`와 `start_server.sh`를 `/root/TRELLIS.2_rocm/`로
    복사합니다(두 파일 모두 conda 환경이 활성화된 상태로 그 위치에서 실행되는 것을
    전제로 합니다).
@@ -160,6 +187,38 @@ TRELLIS.2 모델/파이프라인 코드 자체(`trellis2/`, `app.py`, `assets/`,
   참고), WSL/ROCm 머신에서 실제 TRELLIS.2 출력으로 검증되지는 않았습니다 —
   실제 `/generate` 결과로 다시 확인한 뒤 신뢰하세요.
 
+## 하드웨어 지원 현황 (이슈를 올리기 전에 읽어주세요)
+
+이 중 어느 것도 AMD로부터 공식 지원받는 조합이 아닙니다, 어떤 OS에서든요.
+ROCm 7.2.1 기준
+[공식 WSL2 지원 매트릭스](https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/compatibility/compatibilityrad/wsl/wsl_compatibility.html)에는
+디스크리트 카드(RX 7700 XT~9070 XT, W7000 시리즈)만 올라가 있고, gfx1150을
+포함해 Ryzen AI iGPU는 어디에도 없습니다. gfx1150 지원 자체가
+[AMD 자체 플랫폼 매트릭스에 추가해달라는 오픈 기능 요청](https://github.com/ROCm/TheRock/issues/8186)
+상태이지, 공식 문서화된 타깃이 아닙니다. 이 저장소의 모든 것은 AMD 툴체인이
+아직 공식적으로 인정하지 않는 아키텍처를 대상으로 빌드한 결과물이지, 지원되는
+경로를 따른 게 아닙니다.
+
+그럼에도 [저희 포크의 `setup.sh`](https://github.com/iceblue03/TRELLIS.2_rocm/blob/rocm/setup.sh)에
+있는 `GPU_ARCHS=gfx1150`은 바로 이 칩에서, WSL2 위에서 실제로 컴파일되고
+동작합니다. 같은 트릭이 다른 Ryzen AI iGPU에도 통하는지는 **검증되지
+않았습니다 — 아래 어느 것도 테스트하지 않았습니다**:
+
+- **Radeon 8050S/8060S** (gfx1151/1152/1153, "Strix Halo", 예: Ryzen AI Max
+  385/390/395) — gfx1150과 같은 RDNA3.5 계열로, 한 세대 위 칩입니다. 위 포크의
+  `setup.sh`에서 `GPU_ARCHS=gfx1150`을 해당 코드로 바꿔보는 게 가장 먼저
+  시도해볼 만하고, 지금 동작하는 것과 가장 가까운 조합이지만, 이 브리지에서
+  실제로 됐다고 보고된 적은 없습니다.
+- **Radeon 780M** (gfx1103, Phoenix/Hawk Point) — gfx1150/1151에 있는
+  매트릭스 코어 하드웨어가 없는 더 오래된 RDNA3 iGPU입니다. `GPU_ARCHS`만
+  바꿔서 그대로 될 가능성은 더 낮고, 커뮤니티에서 보고된 대안은 네이티브
+  재빌드가 아니라 `HSA_OVERRIDE_GFX_VERSION`으로, 이 저장소의 방식과는
+  성격이 다르고 더 불안정한 우회책입니다.
+
+이 중 하나를 시도해서 결과가 나오면(되든 안 되든) 이슈를 올려주세요. 이
+저장소의 라이선스가 요청하는 바로 그런 종류의 제보이고, 이 표가 시간이
+지나며 더 정확해질 수 있는 유일한 방법입니다.
+
 ## 동작 확인됨 (2026-09-09)
 
 클라이언트의 "서버 시작" 동작과 똑같이 WSL에서 `start_server.sh`를 실행했습니다
@@ -176,7 +235,12 @@ TRELLIS.2 모델/파이프라인 코드 자체(`trellis2/`, `app.py`, `assets/`,
   파이프라인.
 - [Lamothe/TRELLIS.2_rocm](https://github.com/Lamothe/TRELLIS.2_rocm)과
   [Cardboard-box-a/TRELLIS.2_rocm](https://github.com/Cardboard-box-a/TRELLIS.2_rocm)
-  — 이 브리지가 그 위에서 동작하는 ROCm 포트.
+  — 이 브리지가 기반으로 삼는 ROCm 포트. 저희는 자체 포크
+  [iceblue03/TRELLIS.2_rocm](https://github.com/iceblue03/TRELLIS.2_rocm)을
+  유지하며, gfx1150 빌드 타깃과 gated되지 않은 배경 제거 폴백을 그 위에
+  커밋해뒀습니다. PyTorch, ROCm 자체, TRELLIS.2 모델 가중치는 여전히 설치
+  시점에 각자의 실제 upstream에서 받아오며, 이 저장소에 벤더링되지
+  않습니다.
 - 원래 이 서버와 Blender 전용 클라이언트를 함께 묶고 있던 `trellis2-blender-bridge`에서
   분리되어, 서버가 독립적으로 존재하며 어떤 HTTP 클라이언트로도 구동될 수 있게
   되었습니다. Blender addon은 이제
