@@ -194,35 +194,137 @@ state and is likewise never copied here.
 
 ## Hardware support status (read this before opening an issue)
 
-None of this is officially supported by AMD, on any OS. As of ROCm 7.2.1, the
-[official WSL2 support matrix](https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/compatibility/compatibilityrad/wsl/wsl_compatibility.html)
-lists only discrete cards (RX 7700 XT–9070 XT, W7000-series) — no Ryzen AI
-iGPU, gfx1150 included, appears anywhere in it. gfx1150 support itself is an
-[open feature request against AMD's own platform matrix](https://github.com/ROCm/TheRock/issues/8186),
-not a shipped, documented target. Everything in this repo rests on building
-for an architecture AMD's tooling doesn't officially acknowledge yet, not on
-following a supported path.
+**This section changed since it was first written — AMD's own support matrix
+moved while this repo stood still.** As of ROCm 7.2.1 (what this repo was
+built against), AMD's WSL2 support matrix listed only discrete cards, and
+gfx1150 support was an open feature request, not a shipped target. As of
+**ROCm 10.0.0** (current as of this writing), AMD's
+[compatibility matrix](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html)
+now lists **gfx1103, gfx1150, gfx1151, gfx1152, and gfx1153 — every current
+Ryzen AI iGPU — as officially supported**, and its
+[Windows support matrix](https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/compatibility/compatibilityryz/windows/windows_compatibility.html)
+lists PyTorch 2.9.1 on gfx1150/gfx1151 working on **native Windows** (no WSL2)
+as of ROCm 7.2.1 already — with the caveat that "the entire ROCm stack is not
+yet supported on Windows," only specific components. We have not tested
+either of these newer, more-official paths; everything this repo actually
+does is still the WSL2 + ROCm 7.2.1 + manual `GPU_ARCHS` route. If AMD's
+native-Windows path matures enough to run TRELLIS.2's HIP extensions
+(flash-attn, o-voxel, FlexGEMM) without WSL2 at all, that would obsolete a
+good chunk of this repo's reason to exist — that's a real possibility, not
+hypothetical, and worth watching rather than ignoring.
 
-That said, `GPU_ARCHS=gfx1150` in
+None of that changes what's actually verified here: `GPU_ARCHS=gfx1150` in
 [our fork's `setup.sh`](https://github.com/iceblue03/TRELLIS.2_rocm/blob/rocm/setup.sh)
-does compile and run, on this specific chip, under WSL2. Whether the same
+compiles and runs, on this specific chip, under WSL2, today. Whether the same
 trick extends to other Ryzen AI iGPUs is **unverified — we have not tested
 any of the following**:
 
 - **Radeon 8050S/8060S** (gfx1151/1152/1153, "Strix Halo," e.g. Ryzen AI Max
   385/390/395) — same RDNA3.5 family as gfx1150, one architecture generation
-  up. Swapping `GPU_ARCHS=gfx1150` for the matching code in the fork above is
-  the natural thing to try first, and is the closest match to what's already
-  working here — but nobody has reported it for this bridge specifically.
+  up, and now the *most credible* untested case: 
+  [kyuz0/amd-strix-halo-toolboxes](https://github.com/kyuz0/amd-strix-halo-toolboxes)
+  already has a **working, benchmarked TRELLIS.2 port for gfx1151** (~95s at
+  512³, confirmed real mesh output) — but as a native-Linux Podman/Distrobox
+  container, not WSL2, and with no Blender/Windows integration. If you have
+  this chip, that repo's [PR #71](https://github.com/kyuz0/amd-strix-halo-toolboxes/pull/71)
+  is worth reading before you try adapting this bridge — it documents four
+  gfx1151-specific numerical bugs (MIOpen fp16 NaN, FlexGEMM precision,
+  BiRefNet fp32/fp16 mismatch, a CuMesh HIP crash) that swapping `GPU_ARCHS`
+  alone will not fix.
 - **Radeon 780M** (gfx1103, Phoenix/Hawk Point) — an older RDNA3 iGPU without
   the matrix-core hardware gfx1150/1151 have. A straight `GPU_ARCHS` swap is
-  less likely to just work; the community fallback reported elsewhere is
-  `HSA_OVERRIDE_GFX_VERSION` rather than a native rebuild, which is a
-  different (and shakier) kind of workaround than what this repo does.
+  less likely to just work; community effort here (e.g.
+  [likelovewant/ROCmLibs-for-gfx1103-AMD780M-APU](https://github.com/likelovewant/ROCmLibs-for-gfx1103-AMD780M-APU),
+  895 stars) mostly centers on prebuilt libraries and
+  `HSA_OVERRIDE_GFX_VERSION` rather than a native rebuild like this repo does.
 
-If you try either of these and get a result — working or not — please open
-an issue. That's the specific kind of report this repo's license asks for,
-and it's the only way this table gets more accurate over time.
+If you try any of these and get a result — working or not — please open an
+issue, ideally using the [quickstart below](#try-this-on-your-hardware--we-need-testers).
+That's the specific kind of report this repo's license asks for, and it's the
+only way this table gets more accurate over time.
+
+## Try this on your hardware — we need testers
+
+Everything in [Verified working](#verified-working-2026-09-09) below is real,
+not aspirational — but it's exactly one chip. We don't own a 780M or a Strix
+Halo machine, so we can't extend that table ourselves. This is a call for
+testers, written so it can be handed to an AI coding agent (Claude Code,
+Cursor, Copilot, etc.) as a single self-contained task rather than followed
+by hand.
+
+**One thing an agent can't do for you first**: get a Hugging Face account
+with access to the gated `facebook/dinov3-vitl16-pretrain-lvd1689m` model
+(request access on its model page, approval isn't instant) and run
+`huggingface-cli login` once. Everything after that can run unattended.
+
+Wall-clock time is dominated by GPU kernel compilation (roughly 15-30 min for
+flash-attn alone) and a ~15GB model download, not by decision-making — an
+agent following this shouldn't need to stop and ask what to do next at any
+point before step 7.
+
+1. **Find your gfx code** — the only thing that changes per machine:
+   ```bash
+   wsl.exe -d Ubuntu-24.04 -u root -- bash -lc 'rocminfo | grep -i gfx | head -1'
+   ```
+   Expect `gfx1103`, `gfx1150`, `gfx1151`, `gfx1152`, or `gfx1153`. If this
+   errors or prints nothing, ROCm/WSL2 itself isn't set up — stop and follow
+   [Requirements](#requirements) first; that's a separate, already-solved
+   problem, not what this test is about.
+
+2. **Clone our fork and point the build at your gfx code** (skip the `sed`
+   if step 1 printed `gfx1150`):
+   ```bash
+   wsl.exe -d Ubuntu-24.04 -u root -- bash -lc '
+     cd /root && git clone -b rocm https://github.com/iceblue03/TRELLIS.2_rocm.git TRELLIS.2_rocm
+     cd TRELLIS.2_rocm && sed -i "s/GPU_ARCHS=gfx1150/GPU_ARCHS=<your gfx code>/" setup.sh
+   '
+   ```
+
+3. **Build the conda env** (the slow step — flash-attn compiles from
+   source):
+   ```bash
+   wsl.exe -d Ubuntu-24.04 -u root -- bash -lc '
+     source /root/miniconda3/etc/profile.d/conda.sh
+     conda env create -f /root/TRELLIS.2_rocm/conda-env.yaml -n trellis2-gfx1150
+     conda activate trellis2-gfx1150
+     pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/rocm6.2.4
+     cd /root/TRELLIS.2_rocm
+     export FLASH_ATTENTION_TRITON_AMD_ENABLE=TRUE
+     bash setup.sh --basic --flash-attn --flexgemm --o-voxel --nvdiffrast
+   '
+   ```
+   If an extension fails to compile, that failure *is* the result — save the
+   last ~50 lines of output for the issue.
+
+4. **Copy in the bridge server and start it**:
+   ```bash
+   wsl.exe -d Ubuntu-24.04 -u root -- bash -lc '
+     curl -sL https://raw.githubusercontent.com/iceblue03/trellis2-rocm-bridge/master/trellis_server.py -o /root/TRELLIS.2_rocm/trellis_server.py
+     curl -sL https://raw.githubusercontent.com/iceblue03/trellis2-rocm-bridge/master/start_server.sh -o /root/TRELLIS.2_rocm/start_server.sh
+     bash /root/TRELLIS.2_rocm/start_server.sh
+   '
+   ```
+
+5. **Poll `/health` until it settles** (expect `ready` within ~5 min on
+   first run; `failed` means step 3/4 broke something — check
+   `server_data/server.log` in `/root/TRELLIS.2_rocm/`):
+   ```bash
+   wsl.exe -d Ubuntu-24.04 -u root -- bash -lc 'sleep 30 && curl -s http://127.0.0.1:7861/health'
+   ```
+
+6. **Run one real generation**, not just a model-load check, with any RGBA
+   PNG:
+   ```bash
+   curl -F "image=@/path/to/any/rgba.png" http://127.0.0.1:7861/generate
+   curl http://127.0.0.1:7861/jobs/<job_id_from_above>
+   ```
+
+7. **Open an issue** at
+   [iceblue03/trellis2-rocm-bridge/issues](https://github.com/iceblue03/trellis2-rocm-bridge/issues/new)
+   with: your exact chip and gfx code, which step (if any) failed and its
+   last ~50 lines of output, or — if it worked — the elapsed time and peak
+   memory from the `/jobs/{id}` response. Native Linux instead of WSL2? Say
+   so; that's untested here too and just as useful to know.
 
 ## Verified working (2026-09-09)
 

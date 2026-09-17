@@ -189,35 +189,135 @@ TRELLIS.2 모델/파이프라인 코드 자체(`trellis2/`, `app.py`, `assets/`,
 
 ## 하드웨어 지원 현황 (이슈를 올리기 전에 읽어주세요)
 
-이 중 어느 것도 AMD로부터 공식 지원받는 조합이 아닙니다, 어떤 OS에서든요.
-ROCm 7.2.1 기준
-[공식 WSL2 지원 매트릭스](https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/compatibility/compatibilityrad/wsl/wsl_compatibility.html)에는
-디스크리트 카드(RX 7700 XT~9070 XT, W7000 시리즈)만 올라가 있고, gfx1150을
-포함해 Ryzen AI iGPU는 어디에도 없습니다. gfx1150 지원 자체가
-[AMD 자체 플랫폼 매트릭스에 추가해달라는 오픈 기능 요청](https://github.com/ROCm/TheRock/issues/8186)
-상태이지, 공식 문서화된 타깃이 아닙니다. 이 저장소의 모든 것은 AMD 툴체인이
-아직 공식적으로 인정하지 않는 아키텍처를 대상으로 빌드한 결과물이지, 지원되는
-경로를 따른 게 아닙니다.
+**이 절의 내용은 처음 작성된 이후 달라졌습니다 — 이 저장소는 그대로인데 AMD의
+지원 매트릭스가 그 사이 움직였습니다.** 이 저장소가 기반으로 삼은 ROCm 7.2.1
+기준으로는 AMD의 WSL2 지원 매트릭스에 디스크리트 카드만 있었고, gfx1150 지원은
+아직 오픈 기능 요청 단계였습니다. 이 글을 쓰는 시점 기준 최신 버전인
+**ROCm 10.0.0**에서는 AMD의
+[호환성 매트릭스](https://rocm.docs.amd.com/en/latest/compatibility/compatibility-matrix.html)에
+**gfx1103, gfx1150, gfx1151, gfx1152, gfx1153 — 현재 나온 모든 Ryzen AI
+iGPU가 공식 지원 대상으로 올라와 있고**,
+[Windows 지원 매트릭스](https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/compatibility/compatibilityryz/windows/windows_compatibility.html)에는
+이미 ROCm 7.2.1 시점부터 gfx1150/gfx1151에서 PyTorch 2.9.1이 **WSL2 없이
+네이티브 Windows**에서 동작한다고 나와 있습니다 — 다만 "ROCm 스택 전체가 아직
+Windows에서 지원되는 건 아니고" 일부 구성 요소만 된다는 단서가 붙어 있습니다.
+저희는 이 두 가지 더 최신이고 더 공식적인 경로 어느 쪽도 테스트하지 않았습니다.
+이 저장소가 실제로 하는 일은 여전히 "WSL2 + ROCm 7.2.1 + 수동 `GPU_ARCHS`
+지정" 경로뿐입니다. 만약 AMD의 네이티브 Windows 경로가 발전해서 WSL2 없이도
+TRELLIS.2의 HIP 확장(flash-attn, o-voxel, FlexGEMM)이 돌아가게 된다면, 이
+저장소가 존재할 이유의 상당 부분이 사라질 수 있습니다 — 이건 가정이 아니라
+실제로 일어날 수 있는 일이니 지켜볼 가치가 있습니다.
 
-그럼에도 [저희 포크의 `setup.sh`](https://github.com/iceblue03/TRELLIS.2_rocm/blob/rocm/setup.sh)에
-있는 `GPU_ARCHS=gfx1150`은 바로 이 칩에서, WSL2 위에서 실제로 컴파일되고
+그렇다고 지금 검증된 사실이 바뀌지는 않습니다: [저희 포크의 `setup.sh`](https://github.com/iceblue03/TRELLIS.2_rocm/blob/rocm/setup.sh)의
+`GPU_ARCHS=gfx1150`은 오늘도 바로 이 칩에서, WSL2 위에서 실제로 컴파일되고
 동작합니다. 같은 트릭이 다른 Ryzen AI iGPU에도 통하는지는 **검증되지
 않았습니다 — 아래 어느 것도 테스트하지 않았습니다**:
 
 - **Radeon 8050S/8060S** (gfx1151/1152/1153, "Strix Halo", 예: Ryzen AI Max
-  385/390/395) — gfx1150과 같은 RDNA3.5 계열로, 한 세대 위 칩입니다. 위 포크의
-  `setup.sh`에서 `GPU_ARCHS=gfx1150`을 해당 코드로 바꿔보는 게 가장 먼저
-  시도해볼 만하고, 지금 동작하는 것과 가장 가까운 조합이지만, 이 브리지에서
-  실제로 됐다고 보고된 적은 없습니다.
+  385/390/395) — gfx1150과 같은 RDNA3.5 계열로 한 세대 위 칩이고, 지금은
+  **가장 유력한 미검증 사례**이기도 합니다:
+  [kyuz0/amd-strix-halo-toolboxes](https://github.com/kyuz0/amd-strix-halo-toolboxes)에
+  이미 **gfx1151용으로 동작이 확인되고 벤치마크까지 된 TRELLIS.2 포트**가
+  있습니다(512³ 기준 ~95초, 실제 메시 출력 확인). 다만 WSL2가 아니라 네이티브
+  Linux Podman/Distrobox 컨테이너이고, Blender/Windows 연동은 전혀 없습니다.
+  이 칩을 갖고 계시다면 이 브리지에 맞춰보기 전에 그쪽 저장소의
+  [PR #71](https://github.com/kyuz0/amd-strix-halo-toolboxes/pull/71)을 먼저
+  읽어보시길 권합니다 — `GPU_ARCHS`만 바꿔서는 고쳐지지 않는 gfx1151 전용
+  수치 버그 4가지(MIOpen fp16 NaN, FlexGEMM 정밀도, BiRefNet fp32/fp16 불일치,
+  CuMesh HIP 크래시)를 문서화해뒀습니다.
 - **Radeon 780M** (gfx1103, Phoenix/Hawk Point) — gfx1150/1151에 있는
   매트릭스 코어 하드웨어가 없는 더 오래된 RDNA3 iGPU입니다. `GPU_ARCHS`만
-  바꿔서 그대로 될 가능성은 더 낮고, 커뮤니티에서 보고된 대안은 네이티브
-  재빌드가 아니라 `HSA_OVERRIDE_GFX_VERSION`으로, 이 저장소의 방식과는
-  성격이 다르고 더 불안정한 우회책입니다.
+  바꿔서 그대로 될 가능성은 더 낮고, 관련 커뮤니티 작업(예:
+  [likelovewant/ROCmLibs-for-gfx1103-AMD780M-APU](https://github.com/likelovewant/ROCmLibs-for-gfx1103-AMD780M-APU),
+  895 stars)도 대부분 프리빌드 라이브러리와 `HSA_OVERRIDE_GFX_VERSION` 쪽이지,
+  이 저장소처럼 네이티브로 재빌드하는 방식이 아닙니다.
 
-이 중 하나를 시도해서 결과가 나오면(되든 안 되든) 이슈를 올려주세요. 이
-저장소의 라이선스가 요청하는 바로 그런 종류의 제보이고, 이 표가 시간이
-지나며 더 정확해질 수 있는 유일한 방법입니다.
+이 중 하나를 시도해서 결과가 나오면(되든 안 되든) 이슈를 올려주세요. 가능하면
+[아래 퀵스타트](#내-하드웨어에서-시도해보기--테스터가-필요합니다)를 따라
+해주시면 좋습니다. 이 저장소의 라이선스가 요청하는 바로 그런 종류의
+제보이고, 이 표가 시간이 지나며 더 정확해질 수 있는 유일한 방법입니다.
+
+## 내 하드웨어에서 시도해보기 — 테스터가 필요합니다
+
+아래 [동작 확인됨](#동작-확인됨-2026-09-09)에 적힌 내용은 실제로 확인된
+것이지 희망사항이 아닙니다 — 다만 딱 하나의 칩에서만요. 저희는 780M도
+Strix Halo 머신도 갖고 있지 않아서 그 표를 스스로 넓힐 수가 없습니다. 이
+절은 테스터를 구하기 위한 것으로, 사람이 하나씩 손으로 따라 하기보다는 AI
+코딩 에이전트(Claude Code, Cursor, Copilot 등)에게 하나의 작업으로 통째로
+맡길 수 있도록 작성했습니다.
+
+**에이전트가 대신 못 하는 딱 한 가지**: gated 모델인
+`facebook/dinov3-vitl16-pretrain-lvd1689m`에 대한 접근 권한이 있는 Hugging
+Face 계정을 만들고(모델 페이지에서 접근 요청 — 승인이 즉시 되지는 않습니다)
+`huggingface-cli login`을 한 번 실행해두는 것입니다. 그 이후 단계는 전부
+사람 개입 없이 진행할 수 있습니다.
+
+실제 걸리는 시간의 대부분은 GPU 커널 컴파일(flash-attn만 대략 15~30분)과
+~15GB 모델 다운로드가 차지하며, 판단이 필요한 단계 때문이 아닙니다 — 7단계
+전까지는 에이전트가 다음에 뭘 해야 할지 멈춰서 물어볼 필요가 없어야 합니다.
+
+1. **gfx 코드 확인** — 머신마다 달라지는 유일한 값입니다:
+   ```bash
+   wsl.exe -d Ubuntu-24.04 -u root -- bash -lc 'rocminfo | grep -i gfx | head -1'
+   ```
+   `gfx1103`, `gfx1150`, `gfx1151`, `gfx1152`, `gfx1153` 중 하나가 나와야
+   합니다. 에러가 나거나 아무것도 안 나오면 ROCm/WSL2 자체가 아직 설정 안 된
+   것입니다 — 이 테스트와는 별개의, 이미 해결된 문제이니 먼저
+   [요구 사항](#요구-사항)을 따르세요.
+
+2. **저희 포크를 클론하고 빌드 타깃을 자기 gfx 코드로 맞추기** (1번에서
+   `gfx1150`이 나왔다면 `sed` 줄은 건너뛰어도 됩니다):
+   ```bash
+   wsl.exe -d Ubuntu-24.04 -u root -- bash -lc '
+     cd /root && git clone -b rocm https://github.com/iceblue03/TRELLIS.2_rocm.git TRELLIS.2_rocm
+     cd TRELLIS.2_rocm && sed -i "s/GPU_ARCHS=gfx1150/GPU_ARCHS=<your gfx code>/" setup.sh
+   '
+   ```
+
+3. **conda 환경 빌드** (가장 오래 걸리는 단계 — flash-attn을 소스에서
+   컴파일합니다):
+   ```bash
+   wsl.exe -d Ubuntu-24.04 -u root -- bash -lc '
+     source /root/miniconda3/etc/profile.d/conda.sh
+     conda env create -f /root/TRELLIS.2_rocm/conda-env.yaml -n trellis2-gfx1150
+     conda activate trellis2-gfx1150
+     pip install torch==2.6.0 torchvision==0.21.0 --index-url https://download.pytorch.org/whl/rocm6.2.4
+     cd /root/TRELLIS.2_rocm
+     export FLASH_ATTENTION_TRITON_AMD_ENABLE=TRUE
+     bash setup.sh --basic --flash-attn --flexgemm --o-voxel --nvdiffrast
+   '
+   ```
+   확장 모듈 중 하나라도 컴파일에 실패하면 그 실패 자체가 결과입니다 — 마지막
+   ~50줄 로그를 이슈에 남겨주세요.
+
+4. **브리지 서버를 복사해 넣고 실행**:
+   ```bash
+   wsl.exe -d Ubuntu-24.04 -u root -- bash -lc '
+     curl -sL https://raw.githubusercontent.com/iceblue03/trellis2-rocm-bridge/master/trellis_server.py -o /root/TRELLIS.2_rocm/trellis_server.py
+     curl -sL https://raw.githubusercontent.com/iceblue03/trellis2-rocm-bridge/master/start_server.sh -o /root/TRELLIS.2_rocm/start_server.sh
+     bash /root/TRELLIS.2_rocm/start_server.sh
+   '
+   ```
+
+5. **`/health`가 안정될 때까지 폴링** (처음 실행이면 ~5분 내 `ready`가
+   나와야 정상; `failed`면 3~4단계에서 뭔가 깨진 것 — `/root/TRELLIS.2_rocm/`
+   안의 `server_data/server.log` 확인):
+   ```bash
+   wsl.exe -d Ubuntu-24.04 -u root -- bash -lc 'sleep 30 && curl -s http://127.0.0.1:7861/health'
+   ```
+
+6. **모델 로딩 확인이 아니라 실제 생성 한 번 실행** — 아무 RGBA PNG나:
+   ```bash
+   curl -F "image=@/path/to/any/rgba.png" http://127.0.0.1:7861/generate
+   curl http://127.0.0.1:7861/jobs/<위에서-받은-job_id>
+   ```
+
+7. **이슈 등록**:
+   [iceblue03/trellis2-rocm-bridge/issues](https://github.com/iceblue03/trellis2-rocm-bridge/issues/new)에
+   정확한 칩 모델과 gfx 코드, (실패했다면) 어느 단계에서 실패했는지와 마지막
+   ~50줄 로그, (성공했다면) `/jobs/{id}` 응답의 경과 시간과 피크 메모리를
+   남겨주세요. WSL2 대신 네이티브 Linux라면 그것도 말씀해주세요 — 그 역시
+   여기서 검증되지 않은 조합이라 똑같이 유용한 정보입니다.
 
 ## 동작 확인됨 (2026-09-09)
 
